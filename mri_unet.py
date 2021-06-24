@@ -4,11 +4,122 @@ import torch.nn.functional as F
 
 __all__ = ['MRI_UNet']
 
-def conv2d(in_channels, out_channels, kernel_size, bias=False, padding=1, groups=1):
-    return nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding, bias=bias, groups=groups)
+USE_BIAS=False
 
-def conv3d(in_channels, out_channels, kernel_size, bias=False, padding=1, groups=1):
-    return nn.Conv3d(in_channels, out_channels, kernel_size, padding=padding, bias=bias, groups=groups)
+class ComplexReLu(nn.Module):
+    def __init__(self,  inplace=False):
+        super(ComplexReLu, self).__init__()
+        self.inplace = inplace
+
+    def forward(self, input):
+        mag = torch.abs( input)
+        return torch.nn.functional.relu(mag, inplace=self.inplace).type(torch.complex64)/(mag+1e-6)*input
+
+
+class ComplexLeakyReLu(nn.Module):
+    def __init__(self,  inplace=False):
+        super(ComplexLeakyReLu, self).__init__()
+        self.inplace = inplace
+
+    def forward(self, input):
+        mag = torch.abs(input)
+        return torch.nn.functional.leaky_relu(mag, negative_slope=0.1, inplace=self.inplace).type(torch.complex64)/(mag+1e-6)*input
+
+
+class ComplexELU(nn.Module):
+    def __init__(self,  inplace=False):
+        super(ComplexELU, self).__init__()
+        self.inplace = inplace
+
+    def forward(self, input):
+        mag = torch.abs(input)
+        return torch.nn.functional.elu(mag, inplace=self.inplace).type(torch.complex64)
+
+
+def apply_complex(fr, fi, input, dtype=torch.complex64):
+    return (fr(input.real)-fi(input.imag)).type(dtype) + 1j*(fr(input.imag)+fi(input.real)).type(dtype)
+
+
+class ComplexConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0,
+                 dilation=1, groups=1, bias=USE_BIAS, complex_kernel=False, ndims=2):
+        super(ComplexConv, self).__init__()
+        self.complex_kernel = complex_kernel
+
+        if ndims == 2:
+            self.conv_r = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+            if complex_kernel:
+                self.conv_i = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+        elif ndims == 3:
+            self.conv_r = nn.Conv3d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+            if complex_kernel:
+                self.conv_i = nn.Conv3d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+        else:
+            raise ValueError(f'Convolutions must be 2D or 3D passed {ndims}')
+
+    def forward(self, input):
+        if self.complex_kernel:
+            return apply_complex(self.conv_r, self.conv_i, input)
+        else:
+            return self.conv_r(input.real) + 1j*self.conv_r(input.imag)
+
+
+class ComplexConvTranspose(nn.Module):
+
+    def __init__(self,in_channels, out_channels, kernel_size, stride=1, padding=0,
+                 output_padding=0, groups=1, bias=USE_BIAS, dilation=1, padding_mode='zeros',
+                 complex_kernel=False, ndims=2):
+
+        super(ComplexConvTranspose, self).__init__()
+        self.complex_kernel = complex_kernel
+
+        if ndims == 2:
+            self.conv_r = nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride, padding,
+                                           output_padding, groups, bias, dilation, padding_mode)
+            if self.complex_kernel:
+                self.conv_i = nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride, padding,
+                                               output_padding, groups, bias, dilation, padding_mode)
+        elif ndims == 3:
+            self.conv_r = nn.ConvTranspose3d(in_channels, out_channels, kernel_size, stride, padding,
+                                           output_padding, groups, bias, dilation, padding_mode)
+            if self.complex_kernel:
+                self.conv_i = nn.ConvTranspose3d(in_channels, out_channels, kernel_size, stride, padding,
+                                               output_padding, groups, bias, dilation, padding_mode)
+        else:
+            raise ValueError(f'Convolution transpose must be 2D or 3D passed {ndims}')
+
+    def forward(self, input):
+        if self.complex_kernel:
+            return apply_complex(self.conv_r, self.conv_i, input)
+        else:
+            return self.conv_r(input.real) + 1j * self.conv_r(input.imag)
+
+
+class ComplexDepthwise_separable_conv(nn.Module):
+    def __init__(self, nin, nout, bias=USE_BIAS, ndims=3):
+        super(ComplexDepthwise_separable_conv, self).__init__()
+
+        if ndims == 2:
+            self.depthwise = ComplexConv2d(nin, nin, kernel_size=3, padding=1, groups=nin, bias=bias)
+            self.pointwise = ComplexConv2d(nin, nout, kernel_size=1, bias=bias)
+        elif ndims == 3:
+            self.depthwise = ComplexConv3d(nin, nin, kernel_size=3, padding=1, groups=nin, bias=bias)
+            self.pointwise = ComplexConv3d(nin, nout, kernel_size=1, bias=bias)
+        else:
+            raise ValueError(f'Convolution transpose must be 2D or 3D passed {ndims}')
+
+    def forward(self, x):
+        out = self.depthwise(x)
+        out = self.pointwise(out)
+        return out
+
+def conv(in_channels, out_channels, kernel_size, bias=False, padding=1, groups=1, ndims=2):
+    if ndims == 2:
+        return nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding, bias=bias, groups=groups)
+    elif ndims == 3:
+        return nn.Conv3d(in_channels, out_channels, kernel_size, padding=padding, bias=bias, groups=groups)
+    else:
+        raise ValueError(f'Convolution  must be 2D or 3D passed {ndims}')
 
 class depthwise_separable_conv2d(nn.Module):
     def __init__(self, nin, nout, bias=False):
@@ -103,7 +214,8 @@ class VarNorm3d(nn.BatchNorm3d):
         return input
 
 
-def create_conv(in_channels, out_channels, kernel_size, order, num_groups, padding=1, ndims=2):
+def create_conv(in_channels, out_channels, kernel_size, order, padding=1, ndims=2,
+                complex_input=True, complex_kernel=False):
     """
     Create a list of modules with together constitute a single conv layer with non-linearity
     and optional batchnorm/groupnorm.
@@ -111,13 +223,21 @@ def create_conv(in_channels, out_channels, kernel_size, order, num_groups, paddi
     Args:
         in_channels (int): number of input channels
         out_channels (int): number of output channels
-        order (string): order of things, e.g.
-            'cr' -> conv + ReLU
-            'crg' -> conv + ReLU + groupnorm
-            'cl' -> conv + LeakyReLU
-            'ce' -> conv + ELU
-        num_groups (int): number of groups for the GroupNorm
+        kernel_size (int): size of convolution channel
+
+        order (string): order of modules ('crb')
+            r = relu
+            l = leaky relu
+            e = elu
+            c = Standard convolution
+            C = depthwise convolution
+            i = instance norm
+            b = batch norm
+            v = batch norm without bias
         padding (int): add zero-padding to the input
+        ndims (int): 2 or 3 to indicate 2D or 3D convolutions
+        complex_input (bool): True -> the input is complex, False -> the input is real values
+        cimplex_kernel (bool): If True the convolution will use a complex kernel
 
     Return:
         list of tuple (name, module)
@@ -126,19 +246,34 @@ def create_conv(in_channels, out_channels, kernel_size, order, num_groups, paddi
     modules = []
     for i, char in enumerate(order):
         if char == 'r':
-            modules.append((f'ReLU{i}', nn.ReLU(inplace=True)))
+            if complex_input:
+                modules.append((f'ComplexReLU{i}', ComplexReLu(inplace=True)))
+            else:
+                modules.append((f'ReLU{i}', nn.ReLU(inplace=True)))
+
         elif char == 'l':
-            modules.append((f'LeakyReLU{i}', nn.LeakyReLU(negative_slope=0.1, inplace=True)))
+            if complex_input:
+                modules.append((f'ComplexLeakyReLU{i}', ComplexLeakyReLu(negative_slope=0.1, inplace=True)))
+            else:
+                modules.append((f'LeakyReLU{i}', nn.LeakyReLU(negative_slope=0.1, inplace=True)))
+
         elif char == 'e':
-            modules.append((f'ELU{i}', nn.ELU(inplace=True)))
+            if complex_input:
+                modules.append((f'ComplexELU{i}', ComplexELU(inplace=True)))
+            else:
+                modules.append((f'ELU{i}', nn.ELU(inplace=True)))
+
         elif char == 'c':
             # add learnable bias only in the absence of gatchnorm/groupnorm
             # bias = not ('g' in order or 'b' in order)
             # bias = not ('g' in order)
-            if ndims == 2:
-                modules.append((f'conv{i}', conv2d(in_channels, out_channels, kernel_size, bias=False, padding=padding)))
+            if complex_input:
+                modules.append((f'complex_conv{i}',
+                                ComplexConv(in_channels, out_channels, kernel_size,
+                                            bias=False, padding=padding, complex_kernel=complex_kernel, ndims=ndims)))
             else:
-                modules.append((f'conv{i}', conv3d(in_channels, out_channels, kernel_size, bias=False, padding=padding)))
+                modules.append((f'conv{i}',
+                                conv(in_channels, out_channels, kernel_size, bias=False, padding=padding, ndims=ndims)))
             in_channels = out_channels
         elif char == 'C':
             if ndims == 2:
@@ -152,11 +287,6 @@ def create_conv(in_channels, out_channels, kernel_size, order, num_groups, paddi
                 modules.append((f'instancenorm{i}', nn.InstanceNorm2d(out_channels)))
             else:
                 modules.append((f'instancenorm{i}', nn.InstanceNorm3d(out_channels)))
-        elif char == 'g':
-            # number of groups must be less or equal the number of channels
-            if out_channels < num_groups:
-                num_groups = out_channels
-            modules.append((f'groupnorm{i}', nn.GroupNorm(num_groups=num_groups, num_channels=out_channels)))
         elif char == 'b':
             if ndims == 2:
                 modules.append((f'batchnorm{i}', nn.BatchNorm2d(out_channels)))
@@ -190,10 +320,12 @@ class SingleConv(nn.Sequential):
         num_groups (int): number of groups for the GroupNorm
     """
 
-    def __init__(self, in_channels, out_channels, kernel_size=3, order='crg', num_groups=8, padding=1, ndims=2):
+    def __init__(self, in_channels, out_channels, kernel_size=3, order='crg', num_groups=8, padding=1,
+                 ndims=2, complex_input=True, complex_kernel=False):
         super(SingleConv, self).__init__()
 
-        for name, module in create_conv(in_channels, out_channels, kernel_size, order, num_groups, padding=padding, ndims=ndims):
+        for name, module in create_conv(in_channels, out_channels, kernel_size, order, padding=padding,
+                                        ndims=ndims, complex_input=complex_input, complex_kernel=complex_kernel):
             self.add_module(name, module)
 
 
@@ -219,7 +351,8 @@ class DoubleConv(nn.Sequential):
         num_groups (int): number of groups for the GroupNorm
     """
 
-    def __init__(self, in_channels, out_channels, encoder, kernel_size=3, order='crg', num_groups=8, padding=1, ndims=2):
+    def __init__(self, in_channels, out_channels, encoder, kernel_size=3, order='crg', num_groups=8, padding=1,
+                 ndims=2, complex_input=True, complex_kernel=False):
         super(DoubleConv, self).__init__()
         if encoder:
             # we're in the encoder path
@@ -235,10 +368,12 @@ class DoubleConv(nn.Sequential):
 
         # conv1
         self.add_module('SingleConv1',
-                        SingleConv(conv1_in_channels, conv1_out_channels, kernel_size, order, num_groups, padding, ndims))
+                        SingleConv(conv1_in_channels, conv1_out_channels, kernel_size, order, num_groups, padding,
+                                   ndims, complex_input, complex_kernel ))
         # conv2
         self.add_module('SingleConv2',
-                        SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, order, num_groups, padding, ndims))
+                        SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, order, num_groups, padding,
+                                   ndims, complex_input, complex_kernel))
 
 
 class ResBottle(nn.Module):
@@ -316,7 +451,7 @@ class Encoder(nn.Module):
     """
 
     def __init__(self, in_channels, out_channels, conv_kernel_size=3, basic_module=DoubleConv, downsample=True, conv_layer_order='crb',
-                 num_groups=8, scale_factor=2, ndims=2 ):
+                 num_groups=8, scale_factor=2, ndims=2, complex_input=True, complex_kernel=False):
         super(Encoder, self).__init__()
 
         self.basic_module = basic_module(in_channels, out_channels,
@@ -324,20 +459,33 @@ class Encoder(nn.Module):
                                          kernel_size=conv_kernel_size,
                                          order=conv_layer_order,
                                          num_groups=num_groups,
-                                         ndims=ndims)
+                                         ndims=ndims,
+                                         complex_input=complex_input,
+                                         complex_kernel=complex_kernel)
+
         if downsample:
-            if ndims == 2:
-                self.downsample = nn.Conv2d(in_channels,
-                                                   in_channels,
-                                                   kernel_size=2,
-                                                   stride=scale_factor,
-                                                   padding=0, bias=False, groups=in_channels)
+            if complex_input:
+                self.downsample = ComplexConv(in_channels,
+                                              in_channels,
+                                              kernel_size=2,
+                                              stride=scale_factor,
+                                              padding=0,
+                                              bias=False,
+                                              ndims=ndims,
+                                              complex_kernel=complex_kernel)
             else:
-                self.downsample = nn.Conv3d(in_channels,
-                                                   in_channels,
-                                                   kernel_size=2,
-                                                   stride=scale_factor,
-                                                   padding=0, bias=False, groups=in_channels)
+                if ndims == 2:
+                    self.downsample = nn.Conv2d(in_channels,
+                                                       in_channels,
+                                                       kernel_size=2,
+                                                       stride=scale_factor,
+                                                       padding=0, bias=False, groups=in_channels)
+                else:
+                    self.downsample = nn.Conv3d(in_channels,
+                                                       in_channels,
+                                                       kernel_size=2,
+                                                       stride=scale_factor,
+                                                       padding=0, bias=False, groups=in_channels)
         else:
             self.downsample = nn.Identity()
 
@@ -366,32 +514,47 @@ class Decoder(nn.Module):
     """
 
     def __init__(self, in_channels, out_channels, add_features, kernel_size=3,
-                 scale_factor=2, basic_module=DoubleConv, conv_layer_order='crg', num_groups=8, ndims=2):
+                 scale_factor=2, basic_module=DoubleConv, conv_layer_order='crg', num_groups=8, ndims=2,
+                 complex_input=True, complex_kernel=False):
         super(Decoder, self).__init__()
 
-        if ndims == 2:
-            self.upsample = nn.ConvTranspose2d(in_channels,
-                                               in_channels,
-                                               kernel_size=2,
-                                               stride=scale_factor,
-                                               padding=0,
-                                               output_padding=0,
-                                               bias=False, groups=in_channels)
+        if complex_input:
+            self.upsample = ComplexConvTranspose(in_channels,
+                                                 in_channels,
+                                                 kernel_size=2,
+                                                 stride=scale_factor,
+                                                 padding=0,
+                                                 output_padding=0,
+                                                 bias=False,
+                                                 ndims=ndims,
+                                                 complex_kernel=complex_kernel)
         else:
-            self.upsample = nn.ConvTranspose3d(in_channels,
-                                               in_channels,
-                                               kernel_size=2,
-                                               stride=scale_factor,
-                                               padding=0,
-                                               output_padding=0,
-                                               bias=False, groups=in_channels)
+
+            if ndims == 2:
+                self.upsample = nn.ConvTranspose2d(in_channels,
+                                                   in_channels,
+                                                   kernel_size=2,
+                                                   stride=scale_factor,
+                                                   padding=0,
+                                                   output_padding=0,
+                                                   bias=False, groups=in_channels)
+            else:
+                self.upsample = nn.ConvTranspose3d(in_channels,
+                                                   in_channels,
+                                                   kernel_size=2,
+                                                   stride=scale_factor,
+                                                   padding=0,
+                                                   output_padding=0,
+                                                   bias=False, groups=in_channels)
 
         self.basic_module = basic_module(in_channels + add_features, out_channels,
                                          encoder=False,
                                          kernel_size=kernel_size,
                                          order=conv_layer_order,
                                          num_groups=num_groups,
-                                         ndims=ndims)
+                                         ndims=ndims,
+                                         complex_input=complex_input,
+                                         complex_kernel=complex_kernel)
 
     def forward(self, encoder_features, x):
         # use ConvTranspose2d and summation joining
@@ -450,7 +613,10 @@ class MRI_UNet(nn.Module):
                  depth=4,
                  layer_growth=2.0,
                  residual=True,
-                 ndims=2, **kwargs):
+                 ndims=2,
+                 complex_input=True,
+                 complex_kernel=False,
+                 **kwargs):
 
         super(MRI_UNet, self).__init__()
 
@@ -468,10 +634,13 @@ class MRI_UNet(nn.Module):
         for i, out_feature_num in enumerate(f_maps):
             if i == 0:
                 encoder = Encoder(in_channels, out_feature_num, downsample=False, basic_module=DoubleConv,
-                                  conv_layer_order=layer_order, num_groups=num_groups, ndims=ndims)
+                                  conv_layer_order=layer_order, num_groups=num_groups, ndims=ndims,
+                                  complex_input=complex_input, complex_kernel=complex_kernel)
             else:
                 encoder = Encoder(f_maps[i - 1], out_feature_num, basic_module=DoubleConv,
-                                  conv_layer_order=layer_order, num_groups=num_groups, ndims=ndims)
+                                  conv_layer_order=layer_order, num_groups=num_groups, ndims=ndims,
+                                  complex_input=complex_input, complex_kernel=complex_kernel)
+
             encoders.append(encoder)
 
         self.encoders = nn.ModuleList(encoders)
@@ -485,24 +654,33 @@ class MRI_UNet(nn.Module):
             add_feature_num = reversed_f_maps[i + 1] # features from past layer
             out_feature_num = reversed_f_maps[i + 1] # features from past layer
             decoder = Decoder(in_feature_num, out_feature_num, add_feature_num, basic_module=DoubleConv,
-                              conv_layer_order=layer_order, num_groups=num_groups, ndims=ndims)
+                              conv_layer_order=layer_order, num_groups=num_groups, ndims=ndims,
+                              complex_input=complex_input, complex_kernel=complex_kernel)
             decoders.append(decoder)
 
         self.decoders = nn.ModuleList(decoders)
 
         # in the last layer a 1×1 convolution reduces the number of output
         # channels to the number of labels
-        if ndims == 2:
-            self.final_conv = nn.Conv2d(f_maps[0], out_channels, 1, bias=False)
+        if complex_input:
+           self.final_conv = ComplexConv(f_maps[0], out_channels,
+                                         kernel_size=1, complex_kernel=complex_kernel, bias=False, ndims=ndims)
         else:
-            self.final_conv = nn.Conv3d(f_maps[0], out_channels, 1, bias=False)
+            if ndims == 2:
+                self.final_conv = nn.Conv2d(f_maps[0], out_channels, 1, bias=False)
+            else:
+                self.final_conv = nn.Conv3d(f_maps[0], out_channels, 1, bias=False)
 
         # To handle cases when in channels does not equal output channels
         if out_channels != in_channels:
-            if ndims == 2:
-                self.residual_conv = nn.Conv2d(in_channels, out_channels, 1, bias=False)
+            if complex_input:
+                self.residual_conv = ComplexConv(in_channels, out_channels,
+                                                  kernel_size=1, complex_kernel=complex_kernel, bias=False, ndims=ndims)
             else:
-                self.residual_conv = nn.Conv3d(in_channels, out_channels, 1, bias=False)
+                if ndims == 2:
+                    self.residual_conv = nn.Conv2d(in_channels, out_channels, 1, bias=False)
+                else:
+                    self.residual_conv = nn.Conv3d(in_channels, out_channels, 1, bias=False)
         else:
             self.residual_conv = nn.Identity()
 
