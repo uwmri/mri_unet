@@ -317,10 +317,9 @@ class SingleConv(nn.Sequential):
             'crg' -> conv + ReLU + groupnorm
             'cl' -> conv + LeakyReLU
             'ce' -> conv + ELU
-        num_groups (int): number of groups for the GroupNorm
     """
 
-    def __init__(self, in_channels, out_channels, kernel_size=3, order='crg', num_groups=8, padding=1,
+    def __init__(self, in_channels, out_channels, kernel_size=3, order='crg', padding=1,
                  ndims=2, complex_input=True, complex_kernel=False):
         super(SingleConv, self).__init__()
 
@@ -348,10 +347,9 @@ class DoubleConv(nn.Sequential):
             'crg' -> conv + ReLU + groupnorm
             'cl' -> conv + LeakyReLU
             'ce' -> conv + ELU
-        num_groups (int): number of groups for the GroupNorm
     """
 
-    def __init__(self, in_channels, out_channels, encoder, kernel_size=3, order='crg', num_groups=8, padding=1,
+    def __init__(self, in_channels, out_channels, encoder, kernel_size=3, order='crg', padding=1,
                  ndims=2, complex_input=True, complex_kernel=False):
         super(DoubleConv, self).__init__()
         if encoder:
@@ -368,67 +366,13 @@ class DoubleConv(nn.Sequential):
 
         # conv1
         self.add_module('SingleConv1',
-                        SingleConv(conv1_in_channels, conv1_out_channels, kernel_size, order, num_groups, padding,
+                        SingleConv(conv1_in_channels, conv1_out_channels, kernel_size, order, padding,
                                    ndims, complex_input, complex_kernel ))
         # conv2
         self.add_module('SingleConv2',
-                        SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, order, num_groups, padding,
+                        SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, order, padding,
                                    ndims, complex_input, complex_kernel))
 
-
-class ResBottle(nn.Module):
-    """
-    A module consisting of two consecutive convolution layers (e.g. BatchNorm2d+ReLU+Conv2d).
-    We use (Conv2d+ReLU+GroupNorm2d) by default.
-    This can be changed however by providing the 'order' argument, e.g. in order
-    to change to Conv2d+BatchNorm2d+ELU use order='cbe'.
-    Use padded convolutions to make sure that the output (H_out, W_out) is the same
-    as (H_in, W_in), so that you don't have to crop in the decoder path.
-
-    Args:
-        in_channels (int): number of input channels
-        out_channels (int): number of output channels
-        encoder (bool): if True we're in the encoder path, otherwise we're in the decoder
-        kernel_size (int): size of the convolving kernel
-        order (string): determines the order of layers, e.g.
-            'cr' -> conv + ReLU
-            'crg' -> conv + ReLU + groupnorm
-            'cl' -> conv + LeakyReLU
-            'ce' -> conv + ELU
-        num_groups (int): number of groups for the GroupNorm
-    """
-
-    def __init__(self, in_channels, out_channels, encoder, kernel_size=3, order='crg', num_groups=8, padding=1):
-        super(ResBottle, self).__init__()
-        if encoder:
-            # we're in the encoder path
-            conv1_in_channels = in_channels
-            conv1_out_channels = out_channels
-            if conv1_out_channels < in_channels:
-                conv1_out_channels = in_channels
-            conv2_in_channels, conv2_out_channels = conv1_out_channels, out_channels
-        else:
-            # we're in the decoder path, decrease the number of channels in the 1st convolution
-            conv1_in_channels, conv1_out_channels = in_channels, out_channels
-            conv2_in_channels, conv2_out_channels = out_channels, out_channels
-
-        # conv1
-        self.conv1 = SingleConv(conv1_in_channels, conv1_out_channels, kernel_size, 'crb', num_groups, padding=1)
-        # conv2
-        self.conv2 = SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, 'c', num_groups, padding=1)
-
-        # Shortcut
-        self.convshortcut = SingleConv(conv1_in_channels, conv2_out_channels, 1, 'c',  num_groups, padding=0)
-        self.activation = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        shortcut = self.convshortcut(x)
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x += shortcut
-        x = self.activation(x)
-
-        return x
 
 class Encoder(nn.Module):
     """
@@ -447,18 +391,16 @@ class Encoder(nn.Module):
         basic_module(nn.Module): either ResNetBlock or DoubleConv
         conv_layer_order (string): determines the order of layers
             in `DoubleConv` module. See `DoubleConv` for more info.
-        num_groups (int): number of groups for the GroupNorm
     """
 
     def __init__(self, in_channels, out_channels, conv_kernel_size=3, basic_module=DoubleConv, downsample=True, conv_layer_order='crb',
-                 num_groups=8, scale_factor=2, ndims=2, complex_input=True, complex_kernel=False):
+                 scale_factor=2, ndims=2, complex_input=True, complex_kernel=False):
         super(Encoder, self).__init__()
 
         self.basic_module = basic_module(in_channels, out_channels,
                                          encoder=True,
                                          kernel_size=conv_kernel_size,
                                          order=conv_layer_order,
-                                         num_groups=num_groups,
                                          ndims=ndims,
                                          complex_input=complex_input,
                                          complex_kernel=complex_kernel)
@@ -510,11 +452,10 @@ class Decoder(nn.Module):
         basic_module(nn.Module): either ResNetBlock or DoubleConv
         conv_layer_order (string): determines the order of layers
             in `DoubleConv` module. See `DoubleConv` for more info.
-        num_groups (int): number of groups for the GroupNorm
     """
 
     def __init__(self, in_channels, out_channels, add_features, kernel_size=3,
-                 scale_factor=2, basic_module=DoubleConv, conv_layer_order='crg', num_groups=8, ndims=2,
+                 scale_factor=2, basic_module=DoubleConv, conv_layer_order='crg', ndims=2,
                  complex_input=True, complex_kernel=False):
         super(Decoder, self).__init__()
 
@@ -551,17 +492,16 @@ class Decoder(nn.Module):
                                          encoder=False,
                                          kernel_size=kernel_size,
                                          order=conv_layer_order,
-                                         num_groups=num_groups,
                                          ndims=ndims,
                                          complex_input=complex_input,
                                          complex_kernel=complex_kernel)
 
     def forward(self, encoder_features, x):
         # use ConvTranspose2d and summation joining
-        print(x.shape)
+        #print(x.shape)
         x = self.upsample(x)
-        print(encoder_features.shape)
-        print(x.shape)
+        #print(encoder_features.shape)
+        #print(x.shape)
 
         x = torch.cat([encoder_features,x], dim=1)
         x = self.basic_module(x)
@@ -580,9 +520,7 @@ def create_feature_maps(init_channel_number, number_of_fmaps, growth_rate=2.0 ):
 
 class MRI_UNet(nn.Module):
     """
-    2DUnet model from
-    `"2D U-Net: Learning Dense Volumetric Segmentation from Sparse Annotation"
-        <https://arxiv.org/pdf/1606.06650.pdf>`.
+    Unet model that supports 2D and 3D images with complex inputs
 
     Args:
         in_channels (int): number of input channels
@@ -601,7 +539,6 @@ class MRI_UNet(nn.Module):
             in `SingleConv` module. e.g. 'crg' stands for Conv3d+ReLU+GroupNorm3d.
             See `SingleConv` for more info
         init_channel_number (int): number of feature maps in the first conv layer of the encoder; default: 64
-        num_groups (int): number of groups for the GroupNorm
     """
 
     def __init__(self,
@@ -609,7 +546,6 @@ class MRI_UNet(nn.Module):
                  out_channels,
                  f_maps=64,
                  layer_order='crb',
-                 num_groups=0,
                  depth=4,
                  layer_growth=2.0,
                  residual=True,
@@ -624,8 +560,6 @@ class MRI_UNet(nn.Module):
             # use 4 levels in the encoder path as suggested in the paper
             f_maps = create_feature_maps(f_maps, number_of_fmaps=depth, growth_rate=layer_growth)
 
-        print(f_maps)
-
         self.residual = residual
 
         # create encoder path consisting of Encoder modules. The length of the encoder is equal to `len(f_maps)`
@@ -634,11 +568,11 @@ class MRI_UNet(nn.Module):
         for i, out_feature_num in enumerate(f_maps):
             if i == 0:
                 encoder = Encoder(in_channels, out_feature_num, downsample=False, basic_module=DoubleConv,
-                                  conv_layer_order=layer_order, num_groups=num_groups, ndims=ndims,
+                                  conv_layer_order=layer_order, ndims=ndims,
                                   complex_input=complex_input, complex_kernel=complex_kernel)
             else:
                 encoder = Encoder(f_maps[i - 1], out_feature_num, basic_module=DoubleConv,
-                                  conv_layer_order=layer_order, num_groups=num_groups, ndims=ndims,
+                                  conv_layer_order=layer_order, ndims=ndims,
                                   complex_input=complex_input, complex_kernel=complex_kernel)
 
             encoders.append(encoder)
@@ -654,7 +588,7 @@ class MRI_UNet(nn.Module):
             add_feature_num = reversed_f_maps[i + 1] # features from past layer
             out_feature_num = reversed_f_maps[i + 1] # features from past layer
             decoder = Decoder(in_feature_num, out_feature_num, add_feature_num, basic_module=DoubleConv,
-                              conv_layer_order=layer_order, num_groups=num_groups, ndims=ndims,
+                              conv_layer_order=layer_order, ndims=ndims,
                               complex_input=complex_input, complex_kernel=complex_kernel)
             decoders.append(decoder)
 
