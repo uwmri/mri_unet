@@ -17,17 +17,16 @@ class TestMRIUNet(unittest.TestCase):
         for complex_kernel in [True, False]:
             for complex_input in [True, False]:
                 for ndims in [2, 3]:
-                    model = unet.MRI_UNet(in_channels,
-                                          out_channels,
-                                          f_maps=64,
-                                          layer_order='cr',
-                                          num_groups=0,
-                                          depth=2,
-                                          layer_growth=2.0,
-                                          residual=True,
-                                          complex_input=complex_input,
-                                          complex_kernel=complex_kernel,
-                                          ndims=ndims)
+                    model = unet.UNet(in_channels,
+                                      out_channels,
+                                      f_maps=64,
+                                      layer_order='cr',
+                                      depth=2,
+                                      layer_growth=2.0,
+                                      residual=True,
+                                      complex_input=complex_input,
+                                      complex_kernel=complex_kernel,
+                                      ndims=ndims)
                     model.cuda()
 
                     input_size = (in_channels,)

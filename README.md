@@ -13,7 +13,8 @@ also options to support complex kernels. For example, if I want a 3D UNet
 with complex kernels the code would be:
 
 ```python
-    from mri_unet.unet import MRI_UNet
-    model = MRI_UNet(in_channels=2, out_channels=2, complex_kernel=2, complex_input=True)
+    from mri_unet.unet import UNet
+
+model = UNet(in_channels=2, out_channels=2, complex_kernel=2, complex_input=True)
 ```
 
