@@ -11,8 +11,8 @@ class TestMRIUNet(unittest.TestCase):
 
     def test_unet(self):
 
-        in_channels = 8
-        out_channels = 2
+        in_channels = 4
+        out_channels = 4
 
         for complex_kernel in [True, False]:
             for complex_input in [True, False]:
@@ -21,7 +21,7 @@ class TestMRIUNet(unittest.TestCase):
                                       out_channels,
                                       f_maps=64,
                                       layer_order='cr',
-                                      depth=2,
+                                      depth=4,
                                       layer_growth=2.0,
                                       residual=True,
                                       complex_input=complex_input,
@@ -31,7 +31,7 @@ class TestMRIUNet(unittest.TestCase):
 
                     input_size = (in_channels,)
                     for d in range(ndims):
-                        input_size += (128,)
+                        input_size += (80,)
 
                     if complex_input:
                         summary(model, input_size, dtypes=[torch.complex64, ])

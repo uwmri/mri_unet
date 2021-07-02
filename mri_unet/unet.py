@@ -120,13 +120,13 @@ def create_conv(in_channels, out_channels, kernel_size, order, padding=1, ndims=
     for i, char in enumerate(order):
         if char == 'r':
             if complex_input:
-                modules.append((f'ComplexReLU{i}', ComplexReLu(inplace=True)))
+                modules.append((f'ComplexReLU{i}', ComplexReLu()))
             else:
                 modules.append((f'ReLU{i}', nn.ReLU(inplace=True)))
 
         elif char == 'l':
             if complex_input:
-                modules.append((f'ComplexLeakyReLU{i}', ComplexLeakyReLu(negative_slope=0.1, inplace=True)))
+                modules.append((f'ComplexLeakyReLU{i}', ComplexLeakyReLu(negative_slope=0.1)))
             else:
                 modules.append((f'LeakyReLU{i}', nn.LeakyReLU(negative_slope=0.1, inplace=True)))
 
@@ -416,11 +416,9 @@ class UNet(nn.Module):
 
         super(UNet, self).__init__()
 
+        # Create feature maps as list if specified by integer
         if isinstance(f_maps, int):
-            # use 4 levels in the encoder path as suggested in the paper
             f_maps = create_feature_maps(f_maps, number_of_fmaps=depth, growth_rate=layer_growth)
-
-        self.residual = residual
 
         # create encoder path consisting of Encoder modules. The length of the encoder is equal to `len(f_maps)`
         # uses DoubleConv as a basic_module for the Encoder
@@ -465,18 +463,25 @@ class UNet(nn.Module):
             else:
                 self.final_conv = nn.Conv3d(f_maps[0], out_channels, 1, bias=False)
 
-        # To handle cases when in channels does not equal output channels
-        if out_channels != in_channels:
-            if complex_input:
-                self.residual_conv = ComplexConv(in_channels, out_channels,
-                                                 kernel_size=1, complex_kernel=complex_kernel, bias=False, ndims=ndims)
-            else:
-                if ndims == 2:
-                    self.residual_conv = nn.Conv2d(in_channels, out_channels, 1, bias=False)
+
+        # Store boolean to specify if input is added
+        self.residual = residual
+        if self.residual:
+            # Use a 1x1 convolution if the channels out does not equal channels in
+            if out_channels != in_channels:
+                if complex_input:
+                    self.residual_conv = ComplexConv(in_channels, out_channels,
+                                                     kernel_size=1,
+                                                     complex_kernel=complex_kernel,
+                                                     bias=False,
+                                                     ndims=ndims)
                 else:
-                    self.residual_conv = nn.Conv3d(in_channels, out_channels, 1, bias=False)
-        else:
-            self.residual_conv = nn.Identity()
+                    if ndims == 2:
+                        self.residual_conv = nn.Conv2d(in_channels, out_channels, 1, bias=False)
+                    else:
+                        self.residual_conv = nn.Conv3d(in_channels, out_channels, 1, bias=False)
+            else:
+                self.residual_conv = nn.Identity()
 
     def forward(self, x):
 
@@ -485,14 +490,14 @@ class UNet(nn.Module):
 
         # encoder part
         encoders_features = []
-        for encoder in self.encoders:
+        for encoder in self.encoders[:-1]:
             x = encoder(x)
+
             # reverse the encoder outputs to be aligned with the decoder
             encoders_features.insert(0, x)
 
-        # remove the last encoder's output from the list
-        # !!remember: it's the 1st in the list
-        encoders_features = encoders_features[1:]
+        # Last encoder is flat
+        x = self.encoders[-1](x)
 
         # decoder part
         for decoder, encoder_features in zip(self.decoders, encoders_features):

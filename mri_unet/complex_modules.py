@@ -11,11 +11,10 @@ class ComplexReLu(nn.Module):
     '''
     def __init__(self):
         super(ComplexReLu, self).__init__()
-        self.inplace = inplace
 
     def forward(self, input):
         mag = torch.abs(input)
-        return torch.nn.functional.relu(mag).type(torch.complex64) / (mag + 1e-6) * input
+        return torch.nn.functional.relu(mag).type(input.dtype) / (mag + torch.finfo(mag.dtype).eps) * input
 
 
 class ComplexLeakyReLu(nn.Module):
@@ -35,11 +34,11 @@ class ComplexLeakyReLu(nn.Module):
         mag = torch.abs(input)
         return torch.nn.functional.leaky_relu(mag,
                                               negative_slope=self.negative_slope
-                                              ).type(torch.complex64) / (mag + 1e-6) * input
+                                              ).type(input.dtype) / (mag + 1e-6) * input
 
 
-def apply_complex(fr, fi, input, dtype=torch.complex64):
-    return (fr(input.real) - fi(input.imag)).type(dtype) + 1j * (fr(input.imag) + fi(input.real)).type(dtype)
+def apply_complex(fr, fi, input):
+    return (fr(input.real) - fi(input.imag)).type(dtype) + 1j * (fr(input.imag) + fi(input.real)).type(input.dtype)
 
 
 class ComplexConv(nn.Module):
