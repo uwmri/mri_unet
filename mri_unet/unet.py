@@ -118,19 +118,19 @@ def create_conv(in_channels, out_channels, kernel_size, order, padding=1, ndims=
 
     modules = []
     for i, char in enumerate(order):
-        if char == 'r':
+        if char == 'relu':
             if complex_input:
-                modules.append((f'ComplexReLU{i}', ComplexReLu()))
+                modules.append((f'ComplexReLU{i}', ComplexReLU()))
             else:
                 modules.append((f'ReLU{i}', nn.ReLU(inplace=True)))
 
-        elif char == 'l':
+        elif char == 'mod relu':
             if complex_input:
-                modules.append((f'ComplexLeakyReLU{i}', ComplexLeakyReLu(negative_slope=0.1)))
+                modules.append((f'modReLU{i}', modReLU(in_channels=in_channels, ndims=ndims)))
             else:
-                modules.append((f'LeakyReLU{i}', nn.LeakyReLU(negative_slope=0.1, inplace=True)))
+                modules.append((f'ReLU{i}', nn.ReLU(inplace=True)))
 
-        elif char == 'c':
+        elif char == 'convolution':
             # add learnable bias only in the absence of gatchnorm/groupnorm
             # bias = not ('g' in order or 'b' in order)
             # bias = not ('g' in order)
@@ -142,22 +142,23 @@ def create_conv(in_channels, out_channels, kernel_size, order, padding=1, ndims=
                 modules.append((f'conv{i}',
                                 conv(in_channels, out_channels, kernel_size, bias=False, padding=padding, ndims=ndims)))
             in_channels = out_channels
-        elif char == 'C':
+
+        elif char == 'separable convolution':
             modules.append((f'conv{i}',
                             ComplexDepthwiseSeparableConv(in_channels, out_channels, bias=False, ndims=ndims)))
 
             in_channels = out_channels
-        elif char == 'i':
+        elif char == 'instance norm':
             if ndims == 2:
                 modules.append((f'instancenorm{i}', nn.InstanceNorm2d(out_channels)))
             else:
                 modules.append((f'instancenorm{i}', nn.InstanceNorm3d(out_channels)))
-        elif char == 'b':
+        elif char == 'batch norm':
             if ndims == 2:
                 modules.append((f'batchnorm{i}', nn.BatchNorm2d(out_channels)))
             else:
                 modules.append((f'batchnorm{i}', nn.BatchNorm3d(out_channels)))
-        elif char == 'v':
+        elif char == 'variation norm':
             if ndims == 2:
                 modules.append((f'varnorm{i}', VarNorm2d(out_channels)))
             else:
@@ -406,7 +407,7 @@ class UNet(nn.Module):
                  in_channels,
                  out_channels,
                  f_maps=64,
-                 layer_order='cr',
+                 layer_order=['convolution', 'mod relu'],
                  depth=4,
                  layer_growth=2.0,
                  residual=True,

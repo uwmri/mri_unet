@@ -20,7 +20,7 @@ class TestMRIUNet(unittest.TestCase):
                     model = unet.UNet(in_channels,
                                       out_channels,
                                       f_maps=64,
-                                      layer_order='cr',
+                                      layer_order=['convolution', 'mod relu'],
                                       depth=4,
                                       layer_growth=2.0,
                                       residual=True,

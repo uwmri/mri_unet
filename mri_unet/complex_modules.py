@@ -1,44 +1,38 @@
 import torch
 import torch.nn as nn
 
-__all__ = ['ComplexReLu', 'ComplexLeakyReLu',
+__all__ = ['modReLU', 'ComplexReLU',
            'ComplexConv', 'ComplexConvTranspose', 'ComplexDepthwiseSeparableConv']
 
-
-class ComplexReLu(nn.Module):
+class ComplexReLU(nn.Module):
     '''
     A PyTorch module to apply relu activation on the magnitude of the signal. Phase is preserved
     '''
     def __init__(self):
-        super(ComplexReLu, self).__init__()
+        super(ComplexReLU, self).__init__()
+        self.act = nn.ReLU(inplace=False)
 
     def forward(self, input):
-        mag = torch.abs(input)
-        return torch.nn.functional.relu(mag).type(input.dtype) / (mag + torch.finfo(mag.dtype).eps) * input
+        return self.act(input.real) + 1j*self.act(input.imag)
 
 
-class ComplexLeakyReLu(nn.Module):
+class modReLU(nn.Module):
     '''
-    A PyTorch module to apply leaky relu activation on the magnitude of the signal. Phase is preserved
-
-    Args:
-        negative_slope (float): The slope of the negative section of the relu
-
+    A PyTorch module to apply relu activation on the magnitude of the signal. Phase is preserved
     '''
-
-    def __init__(self, negative_slope=0.1):
-        super(ComplexLeakyReLu, self).__init__()
-        self.negative_slope = negative_slope
+    def __init__(self,in_channels=None, ndims=2):
+        super(modReLU, self).__init__()
+        self.act = nn.ReLU(inplace=False)
+        shape = (1, in_channels) + tuple(1 for _ in range(ndims))
+        self.bias = nn.Parameter(torch.zeros(shape), requires_grad=True)
 
     def forward(self, input):
-        mag = torch.abs(input)
-        return torch.nn.functional.leaky_relu(mag,
-                                              negative_slope=self.negative_slope
-                                              ).type(input.dtype) / (mag + 1e-6) * input
+        mag = input.abs()
+        return self.act(mag+self.bias) * input / (mag + torch.finfo(mag.dtype).eps)
 
 
 def apply_complex(fr, fi, input):
-    return (fr(input.real) - fi(input.imag)).type(dtype) + 1j * (fr(input.imag) + fi(input.real)).type(input.dtype)
+    return (fr(input.real) - fi(input.imag)) + 1j * (fr(input.imag) + fi(input.real))
 
 
 class ComplexConv(nn.Module):
