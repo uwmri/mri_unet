@@ -158,7 +158,7 @@ class ComplexDepthwiseSeparableConv(nn.Module):
                  dilation=1, groups=1, bias=False, complex_kernel=False, ndims=2):
         super(ComplexDepthwiseSeparableConv, self).__init__()
 
-        self.depthwise = ComplexConv(in_channels, out_channels,
+        self.depthwise = ComplexConv(in_channels, in_channels,
                                      kernel_size=kernel_size,
                                      stride=stride,
                                      padding=padding,
@@ -172,7 +172,7 @@ class ComplexDepthwiseSeparableConv(nn.Module):
         self.pointwise = ComplexConv(in_channels, out_channels,
                                      kernel_size=1,
                                      stride=stride,
-                                     padding=padding,
+                                     padding=0,
                                      padding_mode=padding_mode,
                                      dilation=dilation,
                                      groups=groups,

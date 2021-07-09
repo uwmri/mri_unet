@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from mri_unet.complex_modules import *
 
 __all__ = ['UNet']
@@ -145,7 +146,8 @@ def create_conv(in_channels, out_channels, kernel_size, order, padding=1, ndims=
 
         elif char == 'separable convolution':
             modules.append((f'conv{i}',
-                            ComplexDepthwiseSeparableConv(in_channels, out_channels, bias=False, ndims=ndims)))
+                            ComplexDepthwiseSeparableConv(in_channels, out_channels, kernel_size,
+                                                          bias=False, padding=padding, ndims=ndims)))
 
             in_channels = out_channels
         elif char == 'instance norm':
@@ -261,7 +263,8 @@ class Encoder(nn.Module):
 
     def __init__(self, in_channels, out_channels, conv_kernel_size=3,
                  basic_module=DoubleConv, downsample=True, conv_layer_order='crb',
-                 scale_factor=2, ndims=2, complex_input=True, complex_kernel=False):
+                 scale_factor=2, ndims=2, complex_input=True, complex_kernel=False,
+                 padding=1):
         super(Encoder, self).__init__()
 
         self.basic_module = basic_module(in_channels, out_channels,
@@ -270,7 +273,8 @@ class Encoder(nn.Module):
                                          order=conv_layer_order,
                                          ndims=ndims,
                                          complex_input=complex_input,
-                                         complex_kernel=complex_kernel)
+                                         complex_kernel=complex_kernel,
+                                         padding=padding)
 
         if downsample:
             if complex_input:
@@ -281,7 +285,8 @@ class Encoder(nn.Module):
                                                padding=0,
                                                bias=False,
                                                ndims=ndims,
-                                               complex_kernel=complex_kernel)
+                                               complex_kernel=complex_kernel,
+                                               groups=in_channels)
             else:
                 if ndims == 2:
                     self.downsampler = nn.Conv2d(in_channels,
@@ -323,7 +328,7 @@ class Decoder(nn.Module):
 
     def __init__(self, in_channels, out_channels, add_features, kernel_size=3,
                  scale_factor=2, basic_module=DoubleConv, conv_layer_order='crg', ndims=2,
-                 complex_input=True, complex_kernel=False):
+                 complex_input=True, complex_kernel=False, padding=1):
         super(Decoder, self).__init__()
 
         if complex_input:
@@ -335,7 +340,8 @@ class Decoder(nn.Module):
                                                  output_padding=0,
                                                  bias=False,
                                                  ndims=ndims,
-                                                 complex_kernel=complex_kernel)
+                                                 complex_kernel=complex_kernel,
+                                                 groups=in_channels)
         else:
 
             if ndims == 2:
@@ -361,7 +367,8 @@ class Decoder(nn.Module):
                                          order=conv_layer_order,
                                          ndims=ndims,
                                          complex_input=complex_input,
-                                         complex_kernel=complex_kernel)
+                                         complex_kernel=complex_kernel,
+                                         padding=padding)
 
     def forward(self, encoder_features, x):
         # use ConvTranspose2d and summation joining
@@ -413,7 +420,8 @@ class UNet(nn.Module):
                  residual=True,
                  ndims=2,
                  complex_input=True,
-                 complex_kernel=False):
+                 complex_kernel=False,
+                 padding=1):
 
         super(UNet, self).__init__()
 
@@ -421,22 +429,37 @@ class UNet(nn.Module):
         if isinstance(f_maps, int):
             f_maps = create_feature_maps(f_maps, number_of_fmaps=depth, growth_rate=layer_growth)
 
+        self.padding = padding
+
         # create encoder path consisting of Encoder modules. The length of the encoder is equal to `len(f_maps)`
         # uses DoubleConv as a basic_module for the Encoder
         encoders = []
+        crop_amount = []
+        current_crop = 0
         for i, out_feature_num in enumerate(f_maps):
             if i == 0:
                 encoder = Encoder(in_channels, out_feature_num, downsample=False, basic_module=DoubleConv,
                                   conv_layer_order=layer_order, ndims=ndims,
-                                  complex_input=complex_input, complex_kernel=complex_kernel)
+                                  complex_input=complex_input, complex_kernel=complex_kernel,
+                                  padding=padding)
+
+                # Last layer layer applies 4 convolutions with no scaling
+                current_crop = (current_crop + 4)
             else:
                 encoder = Encoder(f_maps[i - 1], out_feature_num, basic_module=DoubleConv,
                                   conv_layer_order=layer_order, ndims=ndims,
-                                  complex_input=complex_input, complex_kernel=complex_kernel)
+                                  complex_input=complex_input, complex_kernel=complex_kernel,
+                                  padding=padding)
 
+                # Each layer applies 4 convolutions and scales by 2
+                current_crop = (current_crop + 4)*2
+
+            crop_amount.append( tuple([-current_crop for _ in range(2*ndims)]))
             encoders.append(encoder)
 
+        self.crop_amount = crop_amount[:-1]
         self.encoders = nn.ModuleList(encoders)
+        #print(f'Crop amount {self.crop_amount}')
 
         # create decoder path consisting of the Decoder modules. The length of the decoder is equal to `len(f_maps) - 1`
         # uses DoubleConv as a basic_module for the Decoder
@@ -448,7 +471,8 @@ class UNet(nn.Module):
             out_feature_num = reversed_f_maps[i + 1]  # features from past layer
             decoder = Decoder(in_feature_num, out_feature_num, add_feature_num, basic_module=DoubleConv,
                               conv_layer_order=layer_order, ndims=ndims,
-                              complex_input=complex_input, complex_kernel=complex_kernel)
+                              complex_input=complex_input, complex_kernel=complex_kernel,
+                              padding=padding)
             decoders.append(decoder)
 
         self.decoders = nn.ModuleList(decoders)
@@ -460,9 +484,9 @@ class UNet(nn.Module):
                                           kernel_size=1, complex_kernel=complex_kernel, bias=False, ndims=ndims)
         else:
             if ndims == 2:
-                self.final_conv = nn.Conv2d(f_maps[0], out_channels, 1, bias=False)
+                self.final_conv = nn.Conv2d(f_maps[0], out_channels, kernel_size=1, bias=False)
             else:
-                self.final_conv = nn.Conv3d(f_maps[0], out_channels, 1, bias=False)
+                self.final_conv = nn.Conv3d(f_maps[0], out_channels, kernel_size=1, bias=False)
 
 
         # Store boolean to specify if input is added
@@ -484,6 +508,11 @@ class UNet(nn.Module):
             else:
                 self.residual_conv = nn.Identity()
 
+            if self.padding == 0:
+                self.output_pad = tuple([-4 + p for p in self.crop_amount[-1]])
+            else:
+                self.output_pad = tuple([0 for _ in range(ndims * 2)])
+
     def forward(self, x):
 
         # Keep x
@@ -495,21 +524,31 @@ class UNet(nn.Module):
             x = encoder(x)
 
             # reverse the encoder outputs to be aligned with the decoder
+            #print(x.shape)
             encoders_features.insert(0, x)
 
         # Last encoder is flat
         x = self.encoders[-1](x)
+        #print(x.shape)
 
         # decoder part
-        for decoder, encoder_features in zip(self.decoders, encoders_features):
+        for decoder, encoder_output, crop_amount in zip(self.decoders, encoders_features, self.crop_amount):
             # pass the output from the corresponding encoder and the output
             # of the previous decoder
-            x = decoder(encoder_features, x)
+            #print(f'Decoder {x.shape} {encoder_output.shape} {crop_amount}')
+            if self.padding != 1:
+                encoder_output = F.pad(encoder_output, crop_amount)
+            #print(f'Decoder {x.shape} {encoder_output.shape}')
+            x = decoder(encoder_output, x)
 
         x = self.final_conv(x)
 
-        # Keep skip to end and also down weight to help training
+        # Keep skip to end
         if self.residual:
-            x += self.residual_conv(input)
+            if self.padding != 1:
+                #print(f'Residual {x.shape} {input.shape} {self.output_pad}')
+                x += F.pad( self.residual_conv(input), self.output_pad)
+            else:
+                x += self.residual_conv(input)
 
         return x
