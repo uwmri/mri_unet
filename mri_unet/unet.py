@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -373,10 +374,11 @@ class Decoder(nn.Module):
     def forward(self, encoder_features, x):
         # use ConvTranspose2d and summation joining
         # print(x.shape)
+        #in_shape = x.shape
         x = self.upsample(x)
         # print(encoder_features.shape)
         # print(x.shape)
-
+        #print(f'Encoder size = {encoder_features.shape} , x = {x.shape}, input = {in_shape}')
         x = torch.cat([encoder_features, x], dim=1)
         x = self.basic_module(x)
         return x
@@ -459,7 +461,7 @@ class UNet(nn.Module):
 
         self.crop_amount = crop_amount[:-1]
         self.encoders = nn.ModuleList(encoders)
-        #print(f'Crop amount {self.crop_amount}')
+        print(f'Crop amount {self.crop_amount}')
 
         # create decoder path consisting of the Decoder modules. The length of the decoder is equal to `len(f_maps) - 1`
         # uses DoubleConv as a basic_module for the Decoder
@@ -493,25 +495,58 @@ class UNet(nn.Module):
         self.residual = residual
         if self.residual:
             # Use a 1x1 convolution if the channels out does not equal channels in
-            if out_channels != in_channels:
-                if complex_input:
-                    self.residual_conv = ComplexConv(in_channels, out_channels,
-                                                     kernel_size=1,
-                                                     complex_kernel=complex_kernel,
-                                                     bias=False,
-                                                     ndims=ndims)
+            #if out_channels != in_channels:
+            if complex_input:
+                self.residual_conv = ComplexConv(in_channels, out_channels,
+                                                 kernel_size=1,
+                                                 complex_kernel=complex_kernel,
+                                                 bias=False,
+                                                 ndims=ndims)
+            else:
+                if ndims == 2:
+                    self.residual_conv = nn.Conv2d(in_channels, out_channels, 1, bias=False)
                 else:
-                    if ndims == 2:
-                        self.residual_conv = nn.Conv2d(in_channels, out_channels, 1, bias=False)
-                    else:
-                        self.residual_conv = nn.Conv3d(in_channels, out_channels, 1, bias=False)
-            else:
-                self.residual_conv = nn.Identity()
+                    self.residual_conv = nn.Conv3d(in_channels, out_channels, 1, bias=False)
+            # else:
+            #     self.residual_conv = nn.Identity()
 
-            if self.padding == 0:
-                self.output_pad = tuple([-4 + p for p in self.crop_amount[-1]])
-            else:
-                self.output_pad = tuple([0 for _ in range(ndims * 2)])
+        if self.padding == 0:
+            self.output_pad = tuple([-4 + p for p in self.crop_amount[-1]])
+        else:
+            self.output_pad = tuple([0 for _ in range(ndims * 2)])
+
+    def check_spatial_dimensions(self, input_size):
+
+        input_size = np.array(input_size)
+        #print(f'Input size = {input_size}')
+        for d in range(len(self.encoders)-1):
+            # Convolutions
+            input_size -= 4
+
+            # Downsampling
+            if np.any(input_size % 2 != 0):
+                #print(f'   Down layer size not divisible {input_size}')
+                return False
+            input_size = input_size // 2
+
+
+            #print(f'   Down Layer size {input_size}')
+
+        # Flat layer
+        input_size -= 4
+        #print(f'Flat Layer size {input_size}')
+
+        # Now up layers
+        for u in range(len(self.decoders)):
+            # Upsample
+            input_size *= 2
+
+            # Convolution
+            input_size -= 4
+
+            #print(f'Up Layer size {input_size}')
+
+        return True
 
     def forward(self, x):
 
@@ -547,7 +582,7 @@ class UNet(nn.Module):
         if self.residual:
             if self.padding != 1:
                 #print(f'Residual {x.shape} {input.shape} {self.output_pad}')
-                x += F.pad( self.residual_conv(input), self.output_pad)
+                x += F.pad(self.residual_conv(input), self.output_pad)
             else:
                 x += self.residual_conv(input)
 

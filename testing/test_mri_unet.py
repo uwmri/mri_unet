@@ -16,7 +16,7 @@ class TestMRIUNet(unittest.TestCase):
         out_channels = 4
         device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-        for padding in [1,0]:
+        for padding in [0, 1]:
             for complex_kernel in [True, False]:
                 for complex_input in [True, False]:
                     for ndims in [2, 3]:
@@ -24,7 +24,7 @@ class TestMRIUNet(unittest.TestCase):
                                           out_channels,
                                           f_maps=64,
                                           layer_order=['convolution', 'mod relu'],
-                                          depth=4,
+                                          depth=3,
                                           layer_growth=2.0,
                                           residual=True,
                                           complex_input=complex_input,
@@ -38,8 +38,11 @@ class TestMRIUNet(unittest.TestCase):
                             if padding == 1:
                                 input_size += (80,)
                             else:
-                                input_size += (100,)
+                                input_size += (120,)
 
+                        for a in range(64, 192, 2):
+                            if model.check_spatial_dimensions([a, a, a]):
+                                print(f'Input valid = {a}')
 
                         if complex_input:
                             summary(model, input_size, dtypes=[torch.complex64, ])
