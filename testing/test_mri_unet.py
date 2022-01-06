@@ -2,7 +2,6 @@ import unittest
 from mri_unet import unet
 import torch
 import torch.nn.functional as F
-from torchsummary import summary
 
 if __name__ == '__main__':
     unittest.main()
@@ -44,10 +43,10 @@ class TestMRIUNet(unittest.TestCase):
                             if model.check_spatial_dimensions([a, a, a]):
                                 print(f'Input valid = {a}')
 
-                        if complex_input:
-                            summary(model, input_size, dtypes=[torch.complex64, ])
-                        else:
-                            summary(model, input_size, dtypes=[torch.float32, ])
+                        # if complex_input:
+                        #     summary(model, input_size, dtypes=[torch.complex64, ])
+                        # else:
+                        #     summary(model, input_size, dtypes=[torch.float32, ])
 
                         # Test a forward pass with rand
                         if complex_input:

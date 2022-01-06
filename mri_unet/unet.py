@@ -395,6 +395,15 @@ def create_feature_maps(init_channel_number, number_of_fmaps, growth_rate=2.0):
     return fmaps
 
 
+class ScaleLayer(nn.Module):
+    def __init__(self, init_value=1.0):
+        super().__init__()
+        self.scale = nn.Parameter(torch.FloatTensor([init_value]), requires_grad=True)
+
+    def forward(self, x):
+       return x * self.scale
+
+
 class UNet(nn.Module):
     r"""
 
@@ -420,6 +429,7 @@ class UNet(nn.Module):
                  depth=4,
                  layer_growth=2.0,
                  residual=True,
+                 scaled_residual=True,
                  ndims=2,
                  complex_input=True,
                  complex_kernel=False,
@@ -493,22 +503,25 @@ class UNet(nn.Module):
 
         # Store boolean to specify if input is added
         self.residual = residual
-        if self.residual:
+        self.scaled_residual = scaled_residual
+        if self.residual and self.scaled_residual:
             # Use a 1x1 convolution if the channels out does not equal channels in
-            #if out_channels != in_channels:
-            if complex_input:
-                self.residual_conv = ComplexConv(in_channels, out_channels,
-                                                 kernel_size=1,
-                                                 complex_kernel=complex_kernel,
-                                                 bias=False,
-                                                 ndims=ndims)
-            else:
-                if ndims == 2:
-                    self.residual_conv = nn.Conv2d(in_channels, out_channels, 1, bias=False)
+            if out_channels != in_channels:
+                if complex_input:
+                    self.residual_conv = ComplexConv(in_channels, out_channels,
+                                                     kernel_size=1,
+                                                     complex_kernel=complex_kernel,
+                                                     bias=False,
+                                                     ndims=ndims)
                 else:
-                    self.residual_conv = nn.Conv3d(in_channels, out_channels, 1, bias=False)
-            # else:
-            #     self.residual_conv = nn.Identity()
+                    if ndims == 2:
+                        self.residual_conv = nn.Conv2d(in_channels, out_channels, 1, bias=False)
+                    else:
+                        self.residual_conv = nn.Conv3d(in_channels, out_channels, 1, bias=False)
+            else:
+                self.residual_conv = ScaleLayer()
+        elif self.residual:
+            self.residual_conv = nn.Identity()
 
         if self.padding == 0:
             self.output_pad = tuple([-4 + p for p in self.crop_amount[-1]])
