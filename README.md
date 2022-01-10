@@ -1,7 +1,7 @@
 # MRI UNet
 
 # Installation
-This UNet requires PyTorch 1.8 or greater and can be installed using pip:
+This UNet requires PyTorch 1.10 or greater and can be installed using pip:
 ```
     pip install mri_unet 
 ```
